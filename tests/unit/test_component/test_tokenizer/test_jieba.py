@@ -121,6 +121,62 @@ def test_tokenize_batch_preserves_order() -> None:
     assert out[2] == []
 
 
+def test_tokenize_hangul_query_is_not_empty() -> None:
+    """Korean queries must reach BM25 with terms (regression: they were ``[]``).
+
+    jieba's dictionary is Chinese, so ``cut_for_search("진지")`` returns the
+    single syllables ``["진", "지"]`` and the ``min_length=2`` filter dropped
+    both — ``sparse_recall`` then returned ``[]`` before touching the index,
+    so keyword search silently answered zero hits for every Korean query.
+    """
+    tokens = _make_tokenizer().tokenize("진지")
+    assert tokens == ["진지"]
+
+
+def test_hangul_runs_use_character_bigrams() -> None:
+    """A 3+ syllable run yields overlapping bigrams, not one long token."""
+    tokens = _make_tokenizer().tokenize("방어선")
+    assert tokens == ["방어", "어선"]
+
+
+def test_single_syllable_hangul_is_kept() -> None:
+    """One-syllable Korean words stay searchable instead of being dropped."""
+    assert _make_tokenizer().tokenize("침") == ["침"]
+
+
+def test_hangul_query_terms_are_a_subset_of_document_terms() -> None:
+    """Write side and query side must meet (the symmetry contract)."""
+    tk = _make_tokenizer()
+    query = set(tk.tokenize("진지"))
+    document = set(tk.tokenize("진지 방어선은 사수 뒤에 두고 적을 끌어들인다."))
+    assert query and query <= document
+
+
+def test_mixed_script_keeps_english_and_hangul() -> None:
+    tokens = _make_tokenizer().tokenize("진지 defense")
+    assert "defense" in tokens
+    assert "진지" in tokens
+
+
+def test_hangul_tokens_are_deduplicated_and_ordered() -> None:
+    """Repeated runs add each bigram once, after jieba's own tokens."""
+    tokens = _make_tokenizer().tokenize("진지 진지")
+    assert tokens.count("진지") == 1
+    assert tokens.index("진지") == 0
+
+
+def test_hangul_can_be_disabled() -> None:
+    """The previous behaviour stays reachable for A/B measurement."""
+    assert _make_tokenizer(hangul=False).tokenize("진지") == []
+
+
+def test_english_and_chinese_output_is_unchanged_by_the_hangul_pass() -> None:
+    """No Hangul in the input means no added tokens at all."""
+    tk = _make_tokenizer()
+    assert tk.tokenize("hello world") == tk.tokenize("hello world")
+    assert "北京" in tk.tokenize("我爱北京天安门")
+
+
 def test_build_tokenizer_returns_jieba_default() -> None:
     """Factory exposes the same JiebaTokenizer the cascade handler uses."""
     with warnings.catch_warnings():
